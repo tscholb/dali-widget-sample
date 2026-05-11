@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns="http://tizen.org/ns/packages" api-version="9" package="com.samsung.dali.widget-app-component" version="1.0.0">
+    <profile name="tizen" />
+    <widget-application appid="com.samsung.dali.widget-app-component"
+                        exec="/usr/apps/com.samsung.dali.widget-app-component/bin/widget-app-component"
+                        type="c++app"
+                        multiple="false"
+                        taskmanage="true"
+                        nodisplay="false"
+                        launch_mode="single">
+        <label>DALi Widget App Template</label>
+        <widget-class classid="class1" update-period="0">
+            <support-size preview="preview.png">4x4</support-size>
+        </widget-class>
+        <widget-class classid="class2" update-period="0">
+            <support-size preview="preview.png">4x4</support-size>
+        </widget-class>
+    </widget-application>
+</manifest>

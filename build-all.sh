@@ -12,6 +12,10 @@ set -e
 SAMPLES=(
     widget-app-template
     widget-viewer-template
+    widget-app-interactive
+    widget-viewer-interactive
+    widget-app-component
+    widget-viewer-component
 )
 
 GBS_ARGS=("$@")
