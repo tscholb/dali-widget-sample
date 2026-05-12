@@ -15,6 +15,7 @@
  */
 
 #include <bundle.h>
+#include <message_port.h>
 #include <dali-toolkit/dali-toolkit.h>
 #include <dali/public-api/adaptor-framework/widget-application.h>
 #include <dali/public-api/adaptor-framework/widget-impl.h>
@@ -29,7 +30,7 @@
 #define LOG_I(fmt, ...) dlog_print(DLOG_INFO, LOG_TAG, "[PROVIDER] " fmt, ##__VA_ARGS__)
 #define LOG_E(fmt, ...) dlog_print(DLOG_ERROR, LOG_TAG, "[PROVIDER] " fmt, ##__VA_ARGS__)
 
-#define APP_ID "com.samsung.dali.widget-app-template"
+#define APP_ID "com.samsung.dali.widget-app-interactive"
 #define WIDGET_CLASS_ID_CLS1 "class1@" APP_ID
 #define WIDGET_CLASS_ID_CLS2 "class2@" APP_ID
 
@@ -37,15 +38,17 @@ using namespace Dali;
 using namespace Dali::Toolkit;
 
 /**
- * TemplateWidget — widget provider.
- *
- * One provider app registers two classes (class1, class2) that differ only in
- * color and label, matching the NUI RedWidget/BlueWidget sample.
+ * InteractiveWidget — widget provider.
+ * 
+ * Demonstrates:
+ * 1. Handling OnResize events.
+ * 2. Updating ContentInfo using a Timer.
+ * 3. MessagePort IPC for dynamic updates from Viewer.
  */
-class TemplateWidget : public Dali::Internal::Adaptor::Widget
+class InteractiveWidget : public Dali::Internal::Adaptor::Widget
 {
 public:
-  TemplateWidget(const Vector4& bgColor, const char* labelText)
+  InteractiveWidget(const Vector4& bgColor, const char* labelText)
   : mBgColor(bgColor), mLabelText(labelText) {}
 
   void OnCreate(const Dali::String& contentInfo, Dali::Window window) override
@@ -75,8 +78,7 @@ public:
     mRootView.Add(label);
     mLabel = label;
 
-    // DALi is a lazy renderer — keep a looping animation so the viewer sees
-    // continuous buffer updates.
+    // DALi is a lazy renderer — keep a looping animation so the viewer sees continuous buffer updates.
     mAnimation = Animation::New(1.0f);
     KeyFrames scaleKeyFrames = KeyFrames::New();
     scaleKeyFrames.Add(0.0f, Vector3(1.0f, 1.0f, 1.0f));
@@ -85,11 +87,27 @@ public:
     mAnimation.AnimateBetween(Property(mLabel, Actor::Property::SCALE), scaleKeyFrames);
     mAnimation.SetLooping(true);
     mAnimation.Play();
+
+    // Start a timer to demonstrate SetContentInfo updates to the Viewer
+    mUpdateTimer = Dali::Timer::New(5000);
+    mUpdateTimer.TickSignal().Connect(this, &InteractiveWidget::OnUpdateTimerTick);
+    mUpdateTimer.Start();
+
+    int port_id = message_port_register_local_port("my_widget_port", OnMessageReceived, this);
+    LOG_I("Registered local message port 'my_widget_port' with id=%d", port_id);
   }
 
   void OnTerminate(const Dali::String& contentInfo, Dali::Widget::Termination type) override
   {
     LOG_I("OnTerminate: label='%s' type=%d", mLabelText, static_cast<int>(type));
+
+    message_port_unregister_local_port(message_port_register_local_port("my_widget_port", nullptr, nullptr));
+
+    if(mUpdateTimer)
+    {
+      mUpdateTimer.Stop();
+      mUpdateTimer.Reset();
+    }
     if(mAnimation)
     {
       mAnimation.Stop();
@@ -109,29 +127,69 @@ public:
 
   void OnPause() override {}
   void OnResume() override {}
-  void OnResize(Dali::Window window) override {}
-  void OnUpdate(const Dali::String& contentInfo, int force) override {}
+  
+  void OnResize(Dali::Window window) override 
+  {
+    LOG_I("OnResize: widget was resized to width=%d, height=%d", window.GetSize().GetWidth(), window.GetSize().GetHeight());
+    std::string text = std::string(mLabelText) + "\nSize: " + std::to_string(window.GetSize().GetWidth()) + "x" + std::to_string(window.GetSize().GetHeight());
+    if(mLabel)
+    {
+      mLabel.SetProperty(TextLabel::Property::TEXT, text.c_str());
+    }
+  }
+  
+  void OnUpdate(const Dali::String& contentInfo, int force) override 
+  {
+    LOG_I("OnUpdate: force=%d, contentInfo=%s", force, contentInfo.CStr());
+  }
 
 private:
+  bool OnUpdateTimerTick()
+  {
+    mUpdateCount++;
+    bundle* b = bundle_create();
+    if(b)
+    {
+      std::string countStr = std::to_string(mUpdateCount);
+      bundle_add_str(b, "COUNT", countStr.c_str());
+
+      bundle_raw* raw = nullptr;
+      int len = 0;
+      if(bundle_encode(b, &raw, &len) == BUNDLE_ERROR_NONE && raw)
+      {
+        Dali::String encoded(reinterpret_cast<const char*>(raw));
+        SetContentInfo(encoded);
+        free(raw);
+        LOG_I("SetContentInfo called with COUNT=%d", mUpdateCount);
+      }
+      bundle_free(b);
+    }
+    return true; // repeat
+  }
+
+  static void OnMessageReceived(int local_port_id, const char* remote_app_id, const char* remote_port, bool trusted_remote_port, bundle* message, void* user_data)
+  {
+    InteractiveWidget* widget = static_cast<InteractiveWidget*>(user_data);
+    char* msg = nullptr;
+    if(bundle_get_str(message, "message", &msg) == BUNDLE_ERROR_NONE && msg)
+    {
+      LOG_I("Message Received from %s: %s", remote_app_id ? remote_app_id : "unknown", msg);
+      if(widget->mLabel)
+      {
+        std::string labelText = std::string(widget->mLabelText) + "\nMsg: " + msg;
+        widget->mLabel.SetProperty(TextLabel::Property::TEXT, labelText.c_str());
+      }
+    }
+  }
+
   static Dali::String DecodeCountFromBundle(const Dali::String& contentInfo)
   {
-    if(contentInfo.Empty())
-    {
-      return Dali::String("(none)");
-    }
-    bundle* b = bundle_decode(reinterpret_cast<const bundle_raw*>(contentInfo.CStr()),
-                              static_cast<int>(contentInfo.Size()));
-    if(!b)
-    {
-      LOG_E("DecodeCountFromBundle: bundle_decode failed (len=%u)", contentInfo.Size());
-      return Dali::String("(decode-failed)");
-    }
+    if(contentInfo.Empty()) return Dali::String("(none)");
+    bundle* b = bundle_decode(reinterpret_cast<const bundle_raw*>(contentInfo.CStr()), static_cast<int>(contentInfo.Size()));
+    if(!b) return Dali::String("(decode-failed)");
     char* count = nullptr;
     Dali::String result("(missing)");
-    if(bundle_get_str(b, "COUNT", &count) == BUNDLE_ERROR_NONE && count)
-    {
-      result = count;
-    }
+    if(bundle_get_str(b, "COUNT", &count) == BUNDLE_ERROR_NONE && count) result = count;
     bundle_free(b);
     return result;
   }
@@ -141,23 +199,20 @@ private:
   Control      mRootView;
   TextLabel    mLabel;
   Animation    mAnimation;
+  Dali::Timer  mUpdateTimer;
+  int          mUpdateCount{1};
 };
 
 Dali::Widget CreateRedWidget(const Dali::String& /*widgetName*/)
 {
-  return Dali::Widget(new TemplateWidget(Color::RED, "Red Widget"));
+  return Dali::Widget(new InteractiveWidget(Color::RED, "Red Widget"));
 }
 
 Dali::Widget CreateBlueWidget(const Dali::String& /*widgetName*/)
 {
-  return Dali::Widget(new TemplateWidget(Color::BLUE, "Blue Widget"));
+  return Dali::Widget(new InteractiveWidget(Color::BLUE, "Blue Widget"));
 }
 
-/**
- * Register widget creating functions on InitSignal rather than before MainLoop.
- * appcore-widget framework (widget_base_on_create) is only initialized after
- * MainLoop starts, matching the pattern used by NUI's NUIWidgetCoreBackend.
- */
 class ProviderController : public Dali::ConnectionTracker
 {
 public:

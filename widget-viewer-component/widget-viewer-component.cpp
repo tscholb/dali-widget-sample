@@ -29,8 +29,8 @@
 #define LOG_I(fmt, ...) dlog_print(DLOG_INFO, LOG_TAG, "[VIEWER] " fmt, ##__VA_ARGS__)
 #define LOG_E(fmt, ...) dlog_print(DLOG_ERROR, LOG_TAG, "[VIEWER] " fmt, ##__VA_ARGS__)
 
-#define VIEWER_APP_ID    "com.samsung.dali.widget-viewer-template"
-#define PROVIDER_APP_ID  "com.samsung.dali.widget-app-template"
+#define VIEWER_APP_ID    "com.samsung.dali.widget-viewer-component"
+#define PROVIDER_APP_ID  "com.samsung.dali.widget-app-component"
 #define WIDGET_ID_CLASS1 "class1@" PROVIDER_APP_ID
 #define WIDGET_ID_CLASS2 "class2@" PROVIDER_APP_ID
 

@@ -15,6 +15,7 @@
  */
 
 #include <bundle.h>
+#include <message_port.h>
 #include <dali-toolkit/dali-toolkit.h>
 #include <dali/dali.h>
 #include <dlog.h>
@@ -29,40 +30,31 @@
 #define LOG_I(fmt, ...) dlog_print(DLOG_INFO, LOG_TAG, "[VIEWER] " fmt, ##__VA_ARGS__)
 #define LOG_E(fmt, ...) dlog_print(DLOG_ERROR, LOG_TAG, "[VIEWER] " fmt, ##__VA_ARGS__)
 
-#define VIEWER_APP_ID    "com.samsung.dali.widget-viewer-template"
-#define PROVIDER_APP_ID  "com.samsung.dali.widget-app-template"
+#define VIEWER_APP_ID    "com.samsung.dali.widget-viewer-interactive"
+#define PROVIDER_APP_ID  "com.samsung.dali.widget-app-interactive"
 #define WIDGET_ID_CLASS1 "class1@" PROVIDER_APP_ID
 #define WIDGET_ID_CLASS2 "class2@" PROVIDER_APP_ID
-
-namespace
-{
-constexpr int WIDGET_WIDTH  = 400;
-constexpr int WIDGET_HEIGHT = 400;
-} // namespace
 
 using namespace Dali;
 using namespace Dali::Toolkit;
 
 /**
- * WidgetViewerTemplateApp — widget viewer.
- *
- * Follows NUI SimpleWidgetViewApp: a white root view with a "Widget Viewer"
- * label on top, and two WidgetView instances (class1, class2) stacked below.
+ * WidgetViewerInteractiveApp — widget viewer.
  */
-class WidgetViewerTemplateApp : public ConnectionTracker
+class WidgetViewerInteractiveApp : public ConnectionTracker
 {
 public:
-  WidgetViewerTemplateApp(Application& app) : mApp(app)
+  WidgetViewerInteractiveApp(Application& app) : mApp(app)
   {
-    app.InitSignal().Connect(this, &WidgetViewerTemplateApp::OnInit);
-    app.TerminateSignal().Connect(this, &WidgetViewerTemplateApp::OnTerminate);
+    app.InitSignal().Connect(this, &WidgetViewerInteractiveApp::OnInit);
+    app.TerminateSignal().Connect(this, &WidgetViewerInteractiveApp::OnTerminate);
   }
 
   void OnInit(Application app)
   {
     mWindow = app.GetWindow();
     mWindow.SetBackgroundColor(Color::WHITE);
-    mWindow.KeyEventSignal().Connect(this, &WidgetViewerTemplateApp::OnKeyEvent);
+    mWindow.KeyEventSignal().Connect(this, &WidgetViewerInteractiveApp::OnKeyEvent);
 
     const Vector2 windowSize(static_cast<float>(mWindow.GetSize().GetWidth()),
                              static_cast<float>(mWindow.GetSize().GetHeight()));
@@ -74,10 +66,11 @@ public:
     mRootView.SetProperty(Actor::Property::PARENT_ORIGIN, ParentOrigin::CENTER);
     mWindow.Add(mRootView);
 
-    TextLabel text = TextLabel::New("Widget Viewer");
+    TextLabel text = TextLabel::New("Widget Viewer (Interactive)\nPress '1' to Resize and Send Message");
     text.SetProperty(TextLabel::Property::TEXT_COLOR, Color::BLACK);
     text.SetProperty(TextLabel::Property::POINT_SIZE, 8);
     text.SetProperty(TextLabel::Property::HORIZONTAL_ALIGNMENT, "CENTER");
+    text.SetProperty(TextLabel::Property::MULTI_LINE, true);
     text.SetProperty(Actor::Property::PIVOT, Pivot::TOP_CENTER);
     text.SetProperty(Actor::Property::PARENT_ORIGIN, ParentOrigin::TOP_CENTER);
     text.SetProperty(Actor::Property::POSITION, Vector2(0.0f, 20.0f));
@@ -88,11 +81,7 @@ public:
 
     const std::string encodedBundle = EncodeBundle();
 
-    // Widgets are added directly to the window (not rootView), matching NUI
-    // SimpleWidgetViewApp. TOP_LEFT pivot/origin so POSITION acts as absolute
-    // top-left offset in window coordinates.
-    mWidgetView1 = mWidgetViewManager.AddWidget(
-      WIDGET_ID_CLASS1, encodedBundle, WIDGET_WIDTH, WIDGET_HEIGHT, 0.0f);
+    mWidgetView1 = mWidgetViewManager.AddWidget(WIDGET_ID_CLASS1, encodedBundle, mWidgetWidth, mWidgetHeight, 0.0f);
     mWidgetView1.SetProperty(Actor::Property::PIVOT, Pivot::TOP_LEFT);
     mWidgetView1.SetProperty(Actor::Property::PARENT_ORIGIN, ParentOrigin::TOP_LEFT);
     mWidgetView1.SetProperty(Actor::Property::POSITION, Vector2(100.0f, 150.0f));
@@ -102,10 +91,8 @@ public:
     AddBlueWidget();
     mBlueCreated = true;
 
-    // Toggle Blue Widget (class2) every 2 seconds to exercise add/remove
-    // lifecycle from the viewer side. Mirrors NUI SimpleWidgetViewApp.onTick().
-    mBlueToggleTimer = Dali::Timer::New(2000);
-    mBlueToggleTimer.TickSignal().Connect(this, &WidgetViewerTemplateApp::OnBlueToggleTick);
+    mBlueToggleTimer = Dali::Timer::New(4000);
+    mBlueToggleTimer.TickSignal().Connect(this, &WidgetViewerInteractiveApp::OnBlueToggleTick);
     mBlueToggleTimer.Start();
   }
 
@@ -128,6 +115,29 @@ public:
       {
         mApp.Quit();
       }
+      else if(event.GetKeyName() == "1" || event.GetKeyName() == "Return")
+      {
+        mWidgetWidth += 200;
+        mWidgetHeight += 200;
+        if(mWidgetWidth > 1000 || mWidgetHeight > 1000)
+        {
+          mWidgetWidth = 200;
+          mWidgetHeight = 200;
+        }
+
+        LOG_I("Resizing WidgetView1 to %d x %d", mWidgetWidth, mWidgetHeight);
+        mWidgetView1.SetProperty(Actor::Property::SIZE, Vector2(static_cast<float>(mWidgetWidth), static_cast<float>(mWidgetHeight)));
+
+        bundle* b = bundle_create();
+        if(b)
+        {
+          std::string msg = "Viewer resized width:" + std::to_string(mWidgetWidth);
+          bundle_add_str(b, "message", msg.c_str());
+          message_port_send_message(PROVIDER_APP_ID, "my_widget_port", b);
+          LOG_I("Sent message via MessagePort");
+          bundle_free(b);
+        }
+      }
     }
   }
 
@@ -135,11 +145,10 @@ private:
   void AddBlueWidget()
   {
     const std::string encodedBundle = EncodeBundle();
-    mWidgetView2                    = mWidgetViewManager.AddWidget(
-      WIDGET_ID_CLASS2, encodedBundle, WIDGET_WIDTH, WIDGET_HEIGHT, 0.0f);
+    mWidgetView2                    = mWidgetViewManager.AddWidget(WIDGET_ID_CLASS2, encodedBundle, 400, 400, 0.0f);
     mWidgetView2.SetProperty(Actor::Property::PIVOT, Pivot::TOP_LEFT);
     mWidgetView2.SetProperty(Actor::Property::PARENT_ORIGIN, ParentOrigin::TOP_LEFT);
-    mWidgetView2.SetProperty(Actor::Property::POSITION, Vector2(WIDGET_WIDTH + 110.0f, 150.0f));
+    mWidgetView2.SetProperty(Actor::Property::POSITION, Vector2(510.0f, 150.0f));
     ConnectWidgetSignals(mWidgetView2);
     mWindow.Add(mWidgetView2);
   }
@@ -161,11 +170,11 @@ private:
 
   void ConnectWidgetSignals(Dali::WidgetView::WidgetView widgetView)
   {
-    widgetView.WidgetAddedSignal().Connect(this, &WidgetViewerTemplateApp::OnWidgetAdded);
-    widgetView.WidgetDeletedSignal().Connect(this, &WidgetViewerTemplateApp::OnWidgetDeleted);
-    widgetView.WidgetCreationAbortedSignal().Connect(this, &WidgetViewerTemplateApp::OnWidgetCreationAborted);
-    widgetView.WidgetContentUpdatedSignal().Connect(this, &WidgetViewerTemplateApp::OnWidgetContentUpdated);
-    widgetView.WidgetFaultedSignal().Connect(this, &WidgetViewerTemplateApp::OnWidgetFaulted);
+    widgetView.WidgetAddedSignal().Connect(this, &WidgetViewerInteractiveApp::OnWidgetAdded);
+    widgetView.WidgetDeletedSignal().Connect(this, &WidgetViewerInteractiveApp::OnWidgetDeleted);
+    widgetView.WidgetCreationAbortedSignal().Connect(this, &WidgetViewerInteractiveApp::OnWidgetCreationAborted);
+    widgetView.WidgetContentUpdatedSignal().Connect(this, &WidgetViewerInteractiveApp::OnWidgetContentUpdated);
+    widgetView.WidgetFaultedSignal().Connect(this, &WidgetViewerInteractiveApp::OnWidgetFaulted);
   }
 
   void RemoveWidgetView(Dali::WidgetView::WidgetView& view)
@@ -173,9 +182,6 @@ private:
     if(view)
     {
       mWidgetViewManager.RemoveWidget(view);
-      // RemoveWidget only tears down the widget process/remote-surface link;
-      // the Actor itself stays in the scene showing the last frame. Detach
-      // it from the window so the buffer disappears immediately.
       mWindow.Remove(view);
       view.Reset();
     }
@@ -207,12 +213,27 @@ private:
   void OnWidgetContentUpdated(Dali::WidgetView::WidgetView widgetView)
   {
     LOG_I("WidgetContentUpdated: widgetId=%s", ExtractWidgetId(widgetView).CStr());
+    
+    Dali::Property::Value val = widgetView.GetProperty(Dali::WidgetView::WidgetView::Property::CONTENT_INFO);
+    Dali::String contentInfo;
+    if(val.Get(contentInfo) && !contentInfo.Empty())
+    {
+      bundle* b = bundle_decode(reinterpret_cast<const bundle_raw*>(contentInfo.CStr()), static_cast<int>(contentInfo.Size()));
+      if(b)
+      {
+        char* count = nullptr;
+        if(bundle_get_str(b, "COUNT", &count) == BUNDLE_ERROR_NONE && count)
+        {
+          LOG_I("WidgetContentUpdated -> COUNT: %s", count);
+        }
+        bundle_free(b);
+      }
+    }
   }
 
   void OnWidgetFaulted(Dali::WidgetView::WidgetView widgetView)
   {
-    LOG_E("WidgetFaulted: widgetId=%s -> ActivateFaultedWidget()",
-          ExtractWidgetId(widgetView).CStr());
+    LOG_E("WidgetFaulted: widgetId=%s -> ActivateFaultedWidget()", ExtractWidgetId(widgetView).CStr());
     widgetView.ActivateFaultedWidget();
   }
 
@@ -234,10 +255,6 @@ private:
       encoded.assign(reinterpret_cast<const char*>(raw), static_cast<size_t>(len));
       free(raw);
     }
-    else
-    {
-      LOG_E("EncodeBundle: bundle_encode failed");
-    }
     bundle_free(b);
     return encoded;
   }
@@ -250,12 +267,14 @@ private:
   Dali::WidgetView::WidgetView        mWidgetView2;
   Dali::Timer                         mBlueToggleTimer;
   bool                                mBlueCreated{false};
+  int                                 mWidgetWidth{400};
+  int                                 mWidgetHeight{400};
 };
 
 __attribute__((visibility("default"))) int main(int argc, char** argv)
 {
-  Application             application = Application::New(&argc, &argv);
-  WidgetViewerTemplateApp viewer(application);
+  Application                application = Application::New(&argc, &argv);
+  WidgetViewerInteractiveApp viewer(application);
   application.MainLoop();
   return 0;
 }
